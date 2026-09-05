@@ -1,0 +1,2 @@
+# Paths are relative to this list file. Remote root:// URLs also work.
+../pythia8NCDIS_26_718x275_minQ2=100_beamEffects_xAngle=-0.025_hiDiv_1.0008.eicrecon.edm4eic.root
