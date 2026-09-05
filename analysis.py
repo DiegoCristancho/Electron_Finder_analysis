@@ -32,6 +32,9 @@ class AnalysisConfig:
     eop_max: float = 1.3
     cut_scan_bins: int = 100
     cut_scan_max_mm: float = 200.0
+    theta_cut_rad: float = 0.02
+    phi_min_rad: float = -0.012
+    phi_max_rad: float = 0.005
 
     def __post_init__(self):
         for name in ("event_tree", "cluster_collection"):
@@ -43,7 +46,7 @@ class AnalysisConfig:
                 raise ValueError(f"{name} must be an integer")
         if self.ecal_system < 0 or self.cut_scan_bins < 1:
             raise ValueError("ecal_system must be >= 0 and cut_scan_bins must be >= 1")
-        for name in ("distance_cut_mm", "eop_min", "eop_max", "cut_scan_max_mm"):
+        for name in ("distance_cut_mm", "eop_min", "eop_max", "cut_scan_max_mm", "theta_cut_rad", "phi_min_rad", "phi_max_rad"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise ValueError(f"{name} must be a finite number")
@@ -51,6 +54,10 @@ class AnalysisConfig:
             raise ValueError("Distance cut and scan maximum must be positive")
         if not 0 <= self.eop_min < self.eop_max:
             raise ValueError("Require 0 <= eop_min < eop_max")
+        if not 0 < self.theta_cut_rad <= math.pi:
+            raise ValueError("Theta limit must be in (0, pi] radians")
+        if not -math.pi <= self.phi_min_rad < self.phi_max_rad <= math.pi:
+            raise ValueError("Require -pi <= phi_min_rad < phi_max_rad <= pi")
 
     @classmethod
     def load(cls, filename=None, **overrides):
@@ -93,6 +100,7 @@ class ElectronAnalysis:
             "events_processed", "status1_electrons", "selected_electrons", "with_reco",
             "with_track", "with_projection", "with_ecal_point", "with_cluster_no_eop",
             "with_cluster_with_eop", "pass_distance_no_eop", "pass_distance_with_eop",
+            "pass_angular_with_eop", "pass_both", "pass_distance_only", "pass_angular_only",
         )})
         self.failures = Counter()
 
@@ -107,6 +115,10 @@ class ElectronAnalysis:
 
     def _fill_match(self, match, projection, suffix):
         hist = self.histograms
+        residuals = angular_residuals(match.position, projection)
+        if residuals is not None:
+            hist[f"h_dtheta_zoom_{suffix}"].Fill(residuals[0])
+            hist[f"h_dphi_{suffix}"].Fill(residuals[1])
         hist[f"h_d3D_{suffix}"].Fill(match.distance_mm)
         hist[f"h_dr_{suffix}"].Fill(position_r(*match.position) - position_r(*projection))
         for name, function in (("dtheta", position_theta), ("deta", position_eta)):
@@ -134,6 +146,7 @@ class ElectronAnalysis:
             "nearest_dxy_noEoP": None, "nearest_dxy_withEoP": None,
             "has_cluster_noEoP": False, "has_cluster_withEoP": False,
             "best_eop": None, "passed_noEoP": False, "passed_withEoP": False,
+            "passed_angular_withEoP": False, "angular_match": None,
         }
         mc = event.MCParticles
         parents = event._MCParticles_parents
@@ -214,6 +227,19 @@ class ElectronAnalysis:
             record["best_eop"] = nearest_eop.eop
             hist["h_eop_selected"].Fill(nearest_eop.eop)
 
+        angular_match = match_clusters_angular(
+            getattr(event, self.config.cluster_collection), position, momentum,
+            self.config.eop_min, self.config.eop_max,
+            self.config.theta_cut_rad, self.config.phi_min_rad, self.config.phi_max_rad,
+        )
+        record["angular_match"] = angular_match
+        record["passed_angular_withEoP"] = angular_match is not None
+        if angular_match is not None:
+            self.counts["pass_angular_with_eop"] += 1
+            self.counts["pass_both" if record["passed_withEoP"] else "pass_angular_only"] += 1
+        elif record["passed_withEoP"]:
+            self.counts["pass_distance_only"] += 1
+
         # Only electrons that reached an ECAL projection enter this denominator.
         for bin_index in range(1, self.config.cut_scan_bins + 1):
             cut = hist["h_total"].GetBinCenter(bin_index)
@@ -222,7 +248,7 @@ class ElectronAnalysis:
                 if match is not None and match.distance_mm < cut:
                     hist[f"h_pass_d3D_{suffix}"].Fill(cut)
         if not record["passed_withEoP"]:
-            reason = "no_cluster_after_EoP" if nearest_eop is None else "cluster_too_far_after_EoP"
+            reason = "no_cluster_after_EoP" if nearest_eop is None else "cluster_too_far_after_distance_cut"
             return self._fail(record, reason)
         return record
 
@@ -257,10 +283,25 @@ class ElectronAnalysis:
             self.histograms[name] = histogram
         self._finalized = True
 
+    def electron_efficiency(self):
+        """Return overall scattered-electron efficiency, or None for no truth signal.
+
+        The denominator includes every scattered electron identified by the
+        existing truth selection, before reconstruction or acceptance requirements.
+        The numerator requires both the E/p window and the distance cut.
+        """
+        total = self.counts["selected_electrons"]
+        return self.counts["pass_distance_with_eop"] / total if total else None
+
+    def angular_electron_efficiency(self):
+        """Angular selection efficiency over ALL truth-selected scattered electrons."""
+        total = self.counts["selected_electrons"]
+        return self.counts["pass_angular_with_eop"] / total if total else None
+
     def summary(self):
         self.finalize()
         mean_names = [f"h_{quantity}_{suffix}"
-                      for quantity in ("d3D", "dr", "dtheta", "deta")
+                      for quantity in ("d3D", "dr", "dtheta", "deta", "dphi")
                       for suffix in ("noEoP", "withEoP")]
         histogram_means = {
             name: float(self.histograms[name].GetMean()) if self.histograms[name].GetEntries() else None
@@ -292,6 +333,9 @@ class ElectronAnalysis:
             plateau[suffix] = {"fraction": maximum, "first_cut_mm": histogram.GetBinCenter(first) if first else None}
         return {
             "cutflow": dict(self.counts), "failure_reasons": dict(self.failures),
+            "electron_efficiency": self.electron_efficiency(),
+            "angular_electron_efficiency": self.angular_electron_efficiency(),
+            "angular_cuts_rad": {"theta": self.config.theta_cut_rad, "phi_min": self.config.phi_min_rad, "phi_max": self.config.phi_max_rad},
             "distance_cut_mm": self.config.distance_cut_mm,
             "at_distance_cut": at_cut, "plateau": plateau,
             "histogram_means": histogram_means,
@@ -364,6 +408,53 @@ def position_eta(x, y, z):
     if tan_half <= 0:
         return None
     return -math.log(tan_half)
+
+
+def position_phi(x, y, z):
+    """Azimuth in radians; undefined on the beam axis."""
+    return math.atan2(y, x) if x != 0 or y != 0 else None
+
+
+def angular_residuals(cluster_position, projection_position):
+    """Return cluster-minus-projection (delta theta, wrapped delta phi), in rad."""
+    theta_c, theta_p = position_theta(*cluster_position), position_theta(*projection_position)
+    phi_c, phi_p = position_phi(*cluster_position), position_phi(*projection_position)
+    if any(value is None for value in (theta_c, theta_p, phi_c, phi_p)):
+        return None
+    delta_phi = math.atan2(math.sin(phi_c - phi_p), math.cos(phi_c - phi_p))
+    return theta_c - theta_p, delta_phi
+
+
+def match_clusters_angular(clusters, position, momentum, eop_min, eop_max,
+                           theta_cut_rad, phi_min_rad, phi_max_rad):
+    """Select a cluster using E/p and strict theta/phi limits, without a radius cut.
+
+    Among passing clusters choose the smallest sum of squared angular residuals
+    relative to the window center and normalized by its half-widths.
+    Ties retain the first cluster. Return copied data.
+    """
+    best, best_score = None, math.inf
+    if momentum <= 0:
+        return None
+    for index, cluster in enumerate(clusters):
+        eop = float(cluster.energy) / momentum
+        if not eop_min < eop < eop_max:
+            continue
+        xyz = (float(cluster.position.x), float(cluster.position.y), float(cluster.position.z))
+        residuals = angular_residuals(xyz, position)
+        if residuals is None:
+            continue
+        dtheta, dphi = residuals
+        if not (abs(dtheta) < theta_cut_rad and phi_min_rad < dphi < phi_max_rad):
+            continue
+        phi_center = (phi_min_rad + phi_max_rad) / 2
+        phi_half_width = (phi_max_rad - phi_min_rad) / 2
+        score = (dtheta / theta_cut_rad) ** 2 + ((dphi - phi_center) / phi_half_width) ** 2
+        if score < best_score:
+            best_score = score
+            best = {"cluster_index": index, "delta_theta_rad": dtheta,
+                    "delta_phi_rad": dphi, "eop": eop, "position_xyz_mm": xyz}
+    return best
 
 
 # ========================================================================
@@ -645,6 +736,8 @@ def format_analysis_summary(summary):
         row(f"Mean delta r ({label})", number(means[f"h_dr_{suffix}"], unit=" mm"))
         row(f"Mean delta theta ({label})", number(means[f"h_dtheta_{suffix}"], 6, " rad"))
         row(f"Mean delta eta ({label})", number(means[f"h_deta_{suffix}"], 6))
+        row(f"Mean delta phi ({label}, wrapped)", number(means[f"h_dphi_{suffix}"], 6, " rad"))
+    lines.append("Eta is position-based pseudorapidity, not azimuth phi. Angular cuts use theta and phi.")
 
     heading("Parent-status summary")
     statuses = summary["parent_status_counts"]
@@ -668,6 +761,22 @@ def format_analysis_summary(summary):
         row(f"{label:<11}- fraction at chosen cut", number(result["fraction"], 6))
     lines.append(f"Fraction denominator: {counts['with_ecal_point']} scattered electrons with an ECAL projection point.")
     lines.append("Failing counts follow Trial.py: they also include missing ECAL points.")
+
+    heading("Overall scattered-electron efficiency")
+    row("Total truth scattered electrons", counts["selected_electrons"])
+    row("Scattered electrons passing E/p and distance", counts["pass_distance_with_eop"])
+    row("Electron efficiency", number(summary["electron_efficiency"], 6))
+
+    heading("Independent theta/phi selection with E/p")
+    limits = summary["angular_cuts_rad"]
+    lines.append(f"Strict cuts: |delta theta| < {limits['theta']:g} rad and {limits['phi_min']:g} < wrapped delta phi < {limits['phi_max']:g} rad; no radial or 3D distance cut.")
+    row("Scattered electrons passing angular cuts", counts["pass_angular_with_eop"])
+    row("Angular electron efficiency", number(summary["angular_electron_efficiency"], 6))
+    row("Passing both selections", counts["pass_both"])
+    row("Passing only distance selection", counts["pass_distance_only"])
+    row("Passing only angular selection", counts["pass_angular_only"])
+    lines.append("Both efficiencies use ALL truth-selected scattered electrons as denominator.")
+    lines.append("Failure reasons below and failures.jsonl refer to the original distance selection.")
 
     heading("Failure reasons")
     for reason, count in sorted(summary["failure_reasons"].items()):

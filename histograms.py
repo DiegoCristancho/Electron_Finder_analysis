@@ -36,6 +36,11 @@ def book_histograms(config):
     histograms['h_parent_status_all'] = ROOT.TH1F('h_parent_status_all', 'Parent generator status of all electrons with status=1 and PDG=11;Parent generator status;Electrons', 60, -0.5, 59.5)
     histograms['h_parent_status_selected'] = ROOT.TH1F('h_parent_status_selected', 'Parent generator status of selected scattered electrons (parent status != 2);Parent generator status;Events', 60, -0.5, 59.5)
     histograms['h_parent_pdg_all'] = ROOT.TH1F('h_parent_pdg_all', 'Parent PDG of all electrons with status=1 and PDG=11;Parent PDG;Electrons', 200, -100, 100)
+    for suffix in ("noEoP", "withEoP"):
+        name = f"h_dphi_{suffix}"
+        histograms[name] = ROOT.TH1F(name, f"Cluster - projection azimuth ({suffix});wrapped #Delta#phi [rad];Events", 200, -0.02, 0.02)
+        name = f"h_dtheta_zoom_{suffix}"
+        histograms[name] = ROOT.TH1F(name, f"Cluster - projection polar angle ({suffix});#Delta#theta [rad];Events", 200, -0.02, 0.02)
     for histogram in histograms.values():
         histogram.SetDirectory(0)
     return histograms
@@ -100,29 +105,29 @@ def plot_analysis(histograms, config, directory):
     histograms['h_eop_selected'].SetLineWidth(2)
     histograms['h_eop_selected'].SetLineColor(ROOT.kBlue + 1)
     histograms['h_eop_selected'].Draw('HIST')
-    c8 = ROOT.TCanvas('c8', 'position based cluster projection differences', 1500, 900)
+    c8 = ROOT.TCanvas('c8', 'Spherical position differences: r, theta, phi', 1500, 900)
     c8.Divide(3, 2)
     c8.cd(1)
     histograms['h_dr_noEoP'].SetLineWidth(2)
     histograms['h_dr_noEoP'].Draw('HIST')
     c8.cd(2)
-    histograms['h_dtheta_noEoP'].SetLineWidth(2)
-    histograms['h_dtheta_noEoP'].Draw('HIST')
+    histograms['h_dtheta_zoom_noEoP'].SetLineWidth(2)
+    histograms['h_dtheta_zoom_noEoP'].Draw('HIST')
     c8.cd(3)
-    histograms['h_deta_noEoP'].SetLineWidth(2)
-    histograms['h_deta_noEoP'].Draw('HIST')
+    histograms['h_dphi_noEoP'].SetLineWidth(2)
+    histograms['h_dphi_noEoP'].Draw('HIST')
     c8.cd(4)
     histograms['h_dr_withEoP'].SetLineWidth(2)
     histograms['h_dr_withEoP'].SetLineColor(ROOT.kBlue + 1)
     histograms['h_dr_withEoP'].Draw('HIST')
     c8.cd(5)
-    histograms['h_dtheta_withEoP'].SetLineWidth(2)
-    histograms['h_dtheta_withEoP'].SetLineColor(ROOT.kBlue + 1)
-    histograms['h_dtheta_withEoP'].Draw('HIST')
+    histograms['h_dtheta_zoom_withEoP'].SetLineWidth(2)
+    histograms['h_dtheta_zoom_withEoP'].SetLineColor(ROOT.kBlue + 1)
+    histograms['h_dtheta_zoom_withEoP'].Draw('HIST')
     c8.cd(6)
-    histograms['h_deta_withEoP'].SetLineWidth(2)
-    histograms['h_deta_withEoP'].SetLineColor(ROOT.kBlue + 1)
-    histograms['h_deta_withEoP'].Draw('HIST')
+    histograms['h_dphi_withEoP'].SetLineWidth(2)
+    histograms['h_dphi_withEoP'].SetLineColor(ROOT.kBlue + 1)
+    histograms['h_dphi_withEoP'].Draw('HIST')
     canvases = {
         "distance_no_eop": c1, "distance_with_eop": c2,
         "fraction_vs_distance": c3, "failed_energies": c4,
