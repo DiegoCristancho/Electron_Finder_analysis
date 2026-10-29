@@ -27,7 +27,7 @@ class AnalysisConfig:
     event_tree: str = "events"
     cluster_collection: str = "EcalBarrelClusters"
     ecal_system: int = 101
-    distance_cut_mm: float = 87.0
+    distance_cut_mm: float = 30.0
     eop_min: float = 0.7
     eop_max: float = 1.3
     cut_scan_bins: int = 100
@@ -98,9 +98,10 @@ class ElectronAnalysis:
         self._finalized = False
         self.counts = Counter({name: 0 for name in (
             "events_processed", "status1_electrons", "selected_electrons", "with_reco",
-            "with_track", "with_projection", "with_ecal_point", "with_cluster_no_eop",
+            "lost_tracks", "with_track", "with_projection", "with_ecal_point", "with_cluster_no_eop",
             "with_cluster_with_eop", "pass_distance_no_eop", "pass_distance_with_eop",
             "pass_angular_with_eop", "pass_both", "pass_distance_only", "pass_angular_only",
+            "angular_clusters_after_eop", "angular_clusters_outside_cuts",
         )})
         self.failures = Counter()
 
@@ -112,6 +113,13 @@ class ElectronAnalysis:
         if record["reco_energy"] is not None:
             self.histograms["h_fail_recoE"].Fill(record["reco_energy"])
         return record
+
+    def _mark_lost_track(self, record):
+        """Record a truth-selected electron with no associated reconstructed track."""
+        record["lost_track"] = True
+        self.counts["lost_tracks"] += 1
+        if record["mc_eta"] is not None:
+            self.histograms["h_lost_track_mc_eta"].Fill(record["mc_eta"])
 
     def _fill_match(self, match, projection, suffix):
         hist = self.histograms
@@ -139,14 +147,17 @@ class ElectronAnalysis:
             "mc_index": None, "reco_index": None, "track_index": None,
             "track_collection_id": None, "projection_index": None, "ecal_point_index": None,
             "projection_xyz_mm": None, "has_ecal_point": False,
-            "mc_energy": None, "reco_energy": None, "reco_momentum": None,
+            "mc_energy": None, "mc_eta": None, "lost_track": False,
+            "reco_energy": None, "reco_momentum": None,
             "parent_status": None, "parent_pdg": None,
             "cluster_index_noEoP": None, "cluster_index_withEoP": None,
             "nearest_d3_noEoP": None, "nearest_d3_withEoP": None,
             "nearest_dxy_noEoP": None, "nearest_dxy_withEoP": None,
             "has_cluster_noEoP": False, "has_cluster_withEoP": False,
-            "best_eop": None, "passed_noEoP": False, "passed_withEoP": False,
+            "eop_nearest_cluster": None, "best_eop": None,
+            "passed_noEoP": False, "passed_withEoP": False,
             "passed_angular_withEoP": False, "angular_match": None,
+            "angular_clusters_after_eop": 0, "angular_clusters_outside_cuts": 0,
         }
         mc = event.MCParticles
         parents = event._MCParticles_parents
@@ -167,6 +178,7 @@ class ElectronAnalysis:
         particle = mc[mc_index]
         self.counts["selected_electrons"] += 1
         record.update(selected=True, mc_index=mc_index, mc_energy=particle_energy(particle),
+                      mc_eta=momentum_eta(particle),
                       parent_status=get_first_parent_status(particle, mc, parents),
                       parent_pdg=get_first_parent_pdg(particle, mc, parents))
         if record["parent_status"] is not None:
@@ -179,6 +191,7 @@ class ElectronAnalysis:
         record["reco_index"] = reco_index
         reco_particles = event.ReconstructedParticles
         if reco_index is None or not 0 <= reco_index < len(reco_particles):
+            self._mark_lost_track(record)
             return self._fail(record, "no_reco_match")
         self.counts["with_reco"] += 1
         reco = reco_particles[reco_index]
@@ -187,6 +200,7 @@ class ElectronAnalysis:
 
         track = find_track_ref_for_reco_index(reco_index, reco_particles, event._ReconstructedParticles_tracks)
         if track is None:
+            self._mark_lost_track(record)
             return self._fail(record, "no_track_on_reco_particle")
         self.counts["with_track"] += 1
         record.update(track_index=int(track.index), track_collection_id=int(track.collectionID))
@@ -211,6 +225,11 @@ class ElectronAnalysis:
         )
         for eop in eop_values:
             hist["h_eop_all"].Fill(eop)
+        if nearest is not None and nearest.eop is not None:
+            # Exactly one pre-cut value per eligible event. Choosing the nearest
+            # cluster geometrically avoids sculpting this diagnostic with E/p.
+            record["eop_nearest_cluster"] = nearest.eop
+            hist["h_eop_per_event"].Fill(nearest.eop)
         for suffix, count_suffix, match in (("noEoP", "no_eop", nearest), ("withEoP", "with_eop", nearest_eop)):
             if match is None:
                 continue
@@ -227,12 +246,15 @@ class ElectronAnalysis:
             record["best_eop"] = nearest_eop.eop
             hist["h_eop_selected"].Fill(nearest_eop.eop)
 
-        angular_match = match_clusters_angular(
+        angular_match, angular_cluster_counts = evaluate_clusters_angular(
             getattr(event, self.config.cluster_collection), position, momentum,
             self.config.eop_min, self.config.eop_max,
             self.config.theta_cut_rad, self.config.phi_min_rad, self.config.phi_max_rad,
         )
         record["angular_match"] = angular_match
+        record.update(angular_cluster_counts)
+        self.counts["angular_clusters_after_eop"] += angular_cluster_counts["angular_clusters_after_eop"]
+        self.counts["angular_clusters_outside_cuts"] += angular_cluster_counts["angular_clusters_outside_cuts"]
         record["passed_angular_withEoP"] = angular_match is not None
         if angular_match is not None:
             self.counts["pass_angular_with_eop"] += 1
@@ -247,8 +269,13 @@ class ElectronAnalysis:
             for suffix, match in (("noEoP", nearest), ("withEoP", nearest_eop)):
                 if match is not None and match.distance_mm < cut:
                     hist[f"h_pass_d3D_{suffix}"].Fill(cut)
-        if not record["passed_withEoP"]:
-            reason = "no_cluster_after_EoP" if nearest_eop is None else "cluster_too_far_after_distance_cut"
+        if not record["passed_angular_withEoP"]:
+            if nearest is None:
+                reason = "no_cluster_available"
+            elif not angular_cluster_counts["angular_clusters_after_eop"]:
+                reason = "clusters_fail_EoP"
+            else:
+                reason = "all_clusters_outside_theta_phi_cuts"
             return self._fail(record, reason)
         return record
 
@@ -303,6 +330,7 @@ class ElectronAnalysis:
         mean_names = [f"h_{quantity}_{suffix}"
                       for quantity in ("d3D", "dr", "dtheta", "deta", "dphi")
                       for suffix in ("noEoP", "withEoP")]
+        mean_names.extend(("h_lost_track_mc_eta", "h_eop_per_event"))
         histogram_means = {
             name: float(self.histograms[name].GetMean()) if self.histograms[name].GetEntries() else None
             for name in mean_names
@@ -335,6 +363,13 @@ class ElectronAnalysis:
             "cutflow": dict(self.counts), "failure_reasons": dict(self.failures),
             "electron_efficiency": self.electron_efficiency(),
             "angular_electron_efficiency": self.angular_electron_efficiency(),
+            "lost_track_eta_entries": int(self.histograms["h_lost_track_mc_eta"].GetEntries()),
+            "eop_per_event_entries": int(self.histograms["h_eop_per_event"].GetEntries()),
+            "eop_diagnostics": {
+                "no_cluster": self.counts["with_ecal_point"] - self.counts["with_cluster_no_eop"],
+                "clusters_fail_eop": self.counts["with_cluster_no_eop"] - self.counts["with_cluster_with_eop"],
+                "clusters_pass_eop": self.counts["with_cluster_with_eop"],
+            },
             "angular_cuts_rad": {"theta": self.config.theta_cut_rad, "phi_min": self.config.phi_min_rad, "phi_max": self.config.phi_max_rad},
             "distance_cut_mm": self.config.distance_cut_mm,
             "at_distance_cut": at_cut, "plateau": plateau,
@@ -373,6 +408,17 @@ def particle_p(obj):
     py = float(obj.momentum.y)
     pz = float(obj.momentum.z)
     return math.sqrt(px * px + py * py + pz * pz)
+
+
+def momentum_eta(obj):
+    """Pseudorapidity from a particle's momentum, or None on the beam axis."""
+    px = float(obj.momentum.x)
+    py = float(obj.momentum.y)
+    pz = float(obj.momentum.z)
+    transverse_momentum = math.hypot(px, py)
+    if transverse_momentum <= 0:
+        return None
+    return math.asinh(pz / transverse_momentum)
 
 
 def position_r(x, y, z):
@@ -425,27 +471,33 @@ def angular_residuals(cluster_position, projection_position):
     return theta_c - theta_p, delta_phi
 
 
-def match_clusters_angular(clusters, position, momentum, eop_min, eop_max,
-                           theta_cut_rad, phi_min_rad, phi_max_rad):
-    """Select a cluster using E/p and strict theta/phi limits, without a radius cut.
+def evaluate_clusters_angular(clusters, position, momentum, eop_min, eop_max,
+                              theta_cut_rad, phi_min_rad, phi_max_rad):
+    """Select by E/p and theta/phi, and count clusters rejected by the angles.
 
     Among passing clusters choose the smallest sum of squared angular residuals
     relative to the window center and normalized by its half-widths.
-    Ties retain the first cluster. Return copied data.
+    Ties retain the first cluster. The counts cover individual clusters, not
+    events; every strict-E/p candidate without a valid passing angular residual
+    is included in ``angular_clusters_outside_cuts``.
     """
     best, best_score = None, math.inf
+    counts = {"angular_clusters_after_eop": 0, "angular_clusters_outside_cuts": 0}
     if momentum <= 0:
-        return None
+        return None, counts
     for index, cluster in enumerate(clusters):
         eop = float(cluster.energy) / momentum
         if not eop_min < eop < eop_max:
             continue
+        counts["angular_clusters_after_eop"] += 1
         xyz = (float(cluster.position.x), float(cluster.position.y), float(cluster.position.z))
         residuals = angular_residuals(xyz, position)
         if residuals is None:
+            counts["angular_clusters_outside_cuts"] += 1
             continue
         dtheta, dphi = residuals
         if not (abs(dtheta) < theta_cut_rad and phi_min_rad < dphi < phi_max_rad):
+            counts["angular_clusters_outside_cuts"] += 1
             continue
         phi_center = (phi_min_rad + phi_max_rad) / 2
         phi_half_width = (phi_max_rad - phi_min_rad) / 2
@@ -454,6 +506,16 @@ def match_clusters_angular(clusters, position, momentum, eop_min, eop_max,
             best_score = score
             best = {"cluster_index": index, "delta_theta_rad": dtheta,
                     "delta_phi_rad": dphi, "eop": eop, "position_xyz_mm": xyz}
+    return best, counts
+
+
+def match_clusters_angular(clusters, position, momentum, eop_min, eop_max,
+                           theta_cut_rad, phi_min_rad, phi_max_rad):
+    """Return the best strict-E/p and theta/phi match, without a 3D cut."""
+    best, _ = evaluate_clusters_angular(
+        clusters, position, momentum, eop_min, eop_max,
+        theta_cut_rad, phi_min_rad, phi_max_rad,
+    )
     return best
 
 
@@ -721,6 +783,7 @@ def format_analysis_summary(summary):
         ("All electrons with status=1 and PDG=11", "status1_electrons"),
         ("Events with selected scattered electron", "selected_electrons"),
         ("Scattered electrons with reco match", "with_reco"),
+        ("Scattered electrons without reco track", "lost_tracks"),
         ("Scattered electrons with reco track", "with_track"),
         ("Scattered electrons with projection", "with_projection"),
         ("Scattered electrons with ECAL projection", "with_ecal_point"),
@@ -730,6 +793,18 @@ def format_analysis_summary(summary):
         row(label, counts[key])
     row("Mean nearest d3D (no E/p)", number(means["h_d3D_noEoP"], unit=" mm"))
     row("Mean nearest d3D (with E/p)", number(means["h_d3D_withEoP"], unit=" mm"))
+
+    heading("Track-loss and E/p diagnostics")
+    row("Lost-track truth eta entries", int(summary["lost_track_eta_entries"]))
+    row("Mean truth eta for lost tracks", number(means["h_lost_track_mc_eta"], 6))
+    row("Nearest-cluster E/p entries (one/event)", int(summary["eop_per_event_entries"]))
+    row("Mean nearest-cluster E/p", number(means["h_eop_per_event"], 6))
+    eop_diagnostics = summary["eop_diagnostics"]
+    row("No reconstructed ECAL cluster", eop_diagnostics["no_cluster"])
+    row("Cluster(s) present, all fail E/p", eop_diagnostics["clusters_fail_eop"])
+    row("At least one cluster passes E/p", eop_diagnostics["clusters_pass_eop"])
+    lines.append("Lost tracks include selected truth electrons with no reco match or no track on their reco particle.")
+    lines.append("The per-event E/p uses the geometrically nearest ECAL cluster before applying the E/p cut.")
 
     heading("Position-based differences")
     for label, suffix in (("no E/p", "noEoP"), ("with E/p", "withEoP")):
@@ -771,12 +846,15 @@ def format_analysis_summary(summary):
     limits = summary["angular_cuts_rad"]
     lines.append(f"Strict cuts: |delta theta| < {limits['theta']:g} rad and {limits['phi_min']:g} < wrapped delta phi < {limits['phi_max']:g} rad; no radial or 3D distance cut.")
     row("Scattered electrons passing angular cuts", counts["pass_angular_with_eop"])
+    row("E/p-passing clusters tested by angular cuts", counts["angular_clusters_after_eop"])
+    row("Clusters outside theta/phi cuts", counts["angular_clusters_outside_cuts"])
     row("Angular electron efficiency", number(summary["angular_electron_efficiency"], 6))
     row("Passing both selections", counts["pass_both"])
     row("Passing only distance selection", counts["pass_distance_only"])
     row("Passing only angular selection", counts["pass_angular_only"])
     lines.append("Both efficiencies use ALL truth-selected scattered electrons as denominator.")
-    lines.append("Failure reasons below and failures.jsonl refer to the original distance selection.")
+    lines.append("Failure reasons below and failures.jsonl use the E/p plus theta/phi selection, not the 3D-distance cut.")
+    lines.append("The all-clusters-outside failure reason counts events; the cluster-level total is reported above.")
 
     heading("Failure reasons")
     for reason, count in sorted(summary["failure_reasons"].items()):

@@ -1,0 +1,79 @@
+
+========== Summary ==========
+Total events                                  : 488
+All electrons with status=1 and PDG=11        : 528
+Events with selected scattered electron       : 488
+Scattered electrons with reco match           : 488
+Scattered electrons without reco track        : 30
+Scattered electrons with reco track           : 458
+Scattered electrons with projection           : 458
+Scattered electrons with ECAL projection      : 458
+Scattered electrons with cluster (no E/p)     : 438
+Scattered electrons with cluster (with E/p)   : 416
+Mean nearest d3D (no E/p)                     : 20.851 mm
+Mean nearest d3D (with E/p)                   : 20.820 mm
+
+========== Track-loss and E/p diagnostics ==========
+Lost-track truth eta entries                  : 30
+Mean truth eta for lost tracks                : -0.857019
+Nearest-cluster E/p entries (one/event)       : 438
+Mean nearest-cluster E/p                      : 1.008652
+Lost tracks include selected truth electrons with no reco match or no track on their reco particle.
+The per-event E/p uses the geometrically nearest ECAL cluster before applying the E/p cut.
+
+========== Position-based differences ==========
+Mean delta r (no E/p)                         : 19.770 mm
+Mean delta theta (no E/p)                     : 0.001368 rad
+Mean delta eta (no E/p)                       : -0.002204
+Mean delta phi (no E/p, wrapped)              : -0.003218 rad
+Mean delta r (with E/p)                       : 19.506 mm
+Mean delta theta (with E/p)                   : 0.002071 rad
+Mean delta eta (with E/p)                     : -0.002996
+Mean delta phi (with E/p, wrapped)            : -0.003404 rad
+Eta is position-based pseudorapidity, not azimuth phi. Angular cuts use theta and phi.
+
+========== Parent-status summary ==========
+Parent generator status  2                    : 40
+Parent generator status 21                    : 146
+Parent generator status 23                    : 227
+Parent generator status 44                    : 115
+Electrons removed by parent_status != 2 cut   : 40
+
+========== Plateau info ==========
+No E/p cut - plateau fraction                 : 0.930131
+No E/p cut - first plateau cut                : 139.000 mm
+With E/p   - plateau fraction                 : 0.906114
+With E/p   - first plateau cut                : 139.000 mm
+
+========== At chosen cut = 30 mm ==========
+No E/p cut - passing scattered electrons      : 412
+No E/p cut - failing scattered electrons      : 46
+No E/p cut - fraction at chosen cut           : 0.899563
+With E/p   - passing scattered electrons      : 403
+With E/p   - failing scattered electrons      : 55
+With E/p   - fraction at chosen cut           : 0.879913
+Fraction denominator: 458 scattered electrons with an ECAL projection point.
+Failing counts follow Trial.py: they also include missing ECAL points.
+
+========== Overall scattered-electron efficiency ==========
+Total truth scattered electrons               : 488
+Scattered electrons passing E/p and distance  : 403
+Electron efficiency                           : 0.825820
+
+========== Independent theta/phi selection with E/p ==========
+Strict cuts: |delta theta| < 0.02 rad and -0.012 < wrapped delta phi < 0.005 rad; no radial or 3D distance cut.
+Scattered electrons passing angular cuts      : 409
+E/p-passing clusters tested by angular cuts   : 427
+Clusters outside theta/phi cuts               : 18
+Angular electron efficiency                   : 0.838115
+Passing both selections                       : 401
+Passing only distance selection               : 2
+Passing only angular selection                : 8
+Both efficiencies use ALL truth-selected scattered electrons as denominator.
+Failure reasons below and failures.jsonl use the E/p plus theta/phi selection, not the 3D-distance cut.
+The all-clusters-outside failure reason counts events; the cluster-level total is reported above.
+
+========== Failure reasons ==========
+all_clusters_outside_theta_phi_cuts           : 7
+no_cluster_after_EoP                          : 42
+no_track_on_reco_particle                     : 30

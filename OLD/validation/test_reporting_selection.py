@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from analysis import ElectronAnalysis
+from analysis import AnalysisConfig, ElectronAnalysis
 from analysis_io import iter_events
 from analysis import format_analysis_summary
 from analysis_io import make_parser
@@ -32,7 +32,7 @@ class ReportingAndSelectionTests(unittest.TestCase):
         with redirect_stdout(original_stdout):
             exec(compile(ast.Module(body=tree.body[start:end], type_ignores=[]), str(trial), "exec"), reference)
         with patch.dict(sys.modules, {"ROOT": ROOT}):
-            analysis = ElectronAnalysis()
+            analysis = ElectronAnalysis(AnalysisConfig(distance_cut_mm=87))
             for index, event in enumerate(events):
                 analysis.process_event(event, index)
             summary = analysis.summary()

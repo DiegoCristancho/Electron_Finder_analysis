@@ -35,7 +35,8 @@ beside the runners. Remove `--max-events` to analyze the whole file.
 
 The detailed **Trial.py-style summary** is printed at completion and saved as
 `summary.txt`: counts, mean distances, position differences, parent information,
-plateaus, passing/failing counts, matching fractions, and failure reasons.
+track-loss and E/p diagnostics, plateaus, passing/failing counts, matching
+fractions, and failure reasons.
 
 ## Display one event
 
@@ -83,8 +84,8 @@ In **histograms.py**, edit `book_histograms()` for bins/titles,
 
 ### Comparing distance and angular selections
 
-Every analysis also runs `match_clusters_angular()` independently of the original
-87 mm distance selection. It requires the same strict E/p window and
+Every analysis also runs `match_clusters_angular()` independently of the configured
+3D-distance selection. It requires the same strict E/p window and
 `abs(delta theta) < theta_cut_rad`, `phi_min_rad < wrapped delta phi < phi_max_rad`, with
 no radial or 3D distance requirement. The angular limits default to **|delta theta| < 0.02 rad**
 and **-0.012 < delta phi < 0.005 rad**; edit `AnalysisConfig` or supply these keys through `--config`.
@@ -95,8 +96,10 @@ of squared residuals relative to the window center, normalized by its half-width
 scattered electrons identified by the existing selection as their denominator,
 including those without reconstructed tracks or ECAL projections. The printed
 and saved summaries compare their efficiencies and passing overlap. Per-event
-angular results are in `events.jsonl`; `failures.jsonl` and legacy failure reasons
-still describe the original distance selection.
+angular results are in `events.jsonl`. `failures.jsonl` and the failure-reason
+summary use the E/p plus theta/phi selection, not the 3D-distance cut. The summary
+separately reports the number of E/p-passing clusters outside the angular window;
+the `all_clusters_outside_theta_phi_cuts` reason is an event count.
 
 **Eta is pseudorapidity, not phi.** Theta is the polar angle and phi is azimuth,
 computed with `atan2(y, x)`; phi differences wrap across the -pi/pi boundary.
@@ -113,6 +116,14 @@ among clusters passing the strict E/p window. Distance cuts are strict too.
 The matching-fraction denominator is electrons with a reconstructed ECAL projection
 point. The printed legacy failing counts still include missing ECAL points.
 
+The `lost_track_eta` figure contains the truth momentum pseudorapidity of selected
+scattered electrons that have either no reconstructed-particle association or a
+matched reconstructed particle with no track. The `e_over_p_per_event` figure has
+one entry per eligible event: it uses the geometrically nearest ECAL cluster before
+the E/p cut, so the displayed distribution is not sculpted by that cut. Dashed
+lines show the configured lower and upper E/p limits. The same values are saved as
+`mc_eta`, `lost_track`, and `eop_nearest_cluster` in `events.jsonl`.
+
 ## Inputs and outputs
 
 You can supply several ROOT paths after the script name. A `.txt` list must be
@@ -127,7 +138,7 @@ to choose a name; an existing nonempty folder is protected from overwriting.
 | Full-file analysis | Single-event display |
 | --- | --- |
 | `analysis.root` | `event_display.root` |
-| Eight figures in `plots/` | Four event figures in `plots/` |
+| Ten figures in `plots/` | Four event figures in `plots/` |
 | `events.jsonl`, `failures.jsonl` | `event.json`, `event.txt` |
 | `summary.json`, `summary.txt` | `summary.json` |
 

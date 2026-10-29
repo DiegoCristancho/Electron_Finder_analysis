@@ -27,12 +27,14 @@ def book_histograms(config):
     histograms['h_dtheta_withEoP'] = ROOT.TH1F('h_dtheta_withEoP', f'Cluster - projection #Delta#theta ({config.eop_min:g} < E/p < {config.eop_max:g});#theta_{{cluster}} - #theta_{{proj}} [rad];Events', 120, -0.2, 0.2)
     histograms['h_deta_withEoP'] = ROOT.TH1F('h_deta_withEoP', f'Cluster - projection #Delta#eta ({config.eop_min:g} < E/p < {config.eop_max:g});#eta_{{cluster}} - #eta_{{proj}};Events', 120, -0.5, 0.5)
     histograms['h_eop_all'] = ROOT.TH1F('h_eop_all', 'E/p of all ECal clusters considered for scattered electron;E/p;Clusters', 120, 0, 3)
+    histograms['h_eop_per_event'] = ROOT.TH1F('h_eop_per_event', 'E/p of geometrically nearest ECal cluster per scattered-electron event (before E/p cut);E/p;Events', 120, 0, 3)
     histograms['h_eop_selected'] = ROOT.TH1F('h_eop_selected', f'E/p of selected clusters passing {config.eop_min:g} < E/p < {config.eop_max:g};E/p;Clusters', 120, 0, 3)
+    histograms['h_lost_track_mc_eta'] = ROOT.TH1F('h_lost_track_mc_eta', 'Truth #eta of scattered electrons without an associated reconstructed track;Truth scattered-electron #eta;Events', 120, -6, 6)
     histograms['h_total'] = ROOT.TH1F('h_total', 'Total scattered electrons with ECAL projection point;distance cut [mm];Events', config.cut_scan_bins, 0, config.cut_scan_max_mm)
     histograms['h_pass_d3D_noEoP'] = ROOT.TH1F('h_pass_d3D_noEoP', 'Scattered electrons with nearest cluster within d_{3D} cut (no E/p);distance cut [mm];Events', config.cut_scan_bins, 0, config.cut_scan_max_mm)
     histograms['h_pass_d3D_withEoP'] = ROOT.TH1F('h_pass_d3D_withEoP', f'Scattered electrons with nearest cluster within d_{{3D}} cut ({config.eop_min:g} < E/p < {config.eop_max:g});distance cut [mm];Events', config.cut_scan_bins, 0, config.cut_scan_max_mm)
-    histograms['h_fail_recoE'] = ROOT.TH1F('h_fail_recoE', f'Reco energy of scattered electrons failing d_{{3D}} < {config.distance_cut_mm:g} mm;Reco electron energy [GeV];Events', 100, 0, 30)
-    histograms['h_fail_mcE'] = ROOT.TH1F('h_fail_mcE', f'MC energy of scattered electrons failing d_{{3D}} < {config.distance_cut_mm:g} mm;MC electron energy [GeV];Events', 100, 0, 30)
+    histograms['h_fail_recoE'] = ROOT.TH1F('h_fail_recoE', 'Reco energy of scattered electrons failing E/p plus #theta/#phi selection;Reco electron energy [GeV];Events', 100, 0, 30)
+    histograms['h_fail_mcE'] = ROOT.TH1F('h_fail_mcE', 'MC energy of scattered electrons failing E/p plus #theta/#phi selection;MC electron energy [GeV];Events', 100, 0, 30)
     histograms['h_parent_status_all'] = ROOT.TH1F('h_parent_status_all', 'Parent generator status of all electrons with status=1 and PDG=11;Parent generator status;Electrons', 60, -0.5, 59.5)
     histograms['h_parent_status_selected'] = ROOT.TH1F('h_parent_status_selected', 'Parent generator status of selected scattered electrons (parent status != 2);Parent generator status;Events', 60, -0.5, 59.5)
     histograms['h_parent_pdg_all'] = ROOT.TH1F('h_parent_pdg_all', 'Parent PDG of all electrons with status=1 and PDG=11;Parent PDG;Electrons', 200, -100, 100)
@@ -128,14 +130,32 @@ def plot_analysis(histograms, config, directory):
     histograms['h_dphi_withEoP'].SetLineWidth(2)
     histograms['h_dphi_withEoP'].SetLineColor(ROOT.kBlue + 1)
     histograms['h_dphi_withEoP'].Draw('HIST')
+    c9 = ROOT.TCanvas('c9', 'E over p per event before the E/p cut', 900, 700)
+    histograms['h_eop_per_event'].SetLineWidth(2)
+    histograms['h_eop_per_event'].SetLineColor(ROOT.kRed + 1)
+    histograms['h_eop_per_event'].Draw('HIST')
+    eop_lines = []
+    line_height = max(1.0, histograms['h_eop_per_event'].GetMaximum() * 1.05)
+    for value in (config.eop_min, config.eop_max):
+        line = ROOT.TLine(value, 0.0, value, line_height)
+        line.SetLineColor(ROOT.kBlue + 1)
+        line.SetLineStyle(2)
+        line.SetLineWidth(2)
+        line.Draw('SAME')
+        eop_lines.append(line)
+    c10 = ROOT.TCanvas('c10', 'Lost-track scattered-electron eta', 900, 700)
+    histograms['h_lost_track_mc_eta'].SetLineWidth(2)
+    histograms['h_lost_track_mc_eta'].SetLineColor(ROOT.kRed + 1)
+    histograms['h_lost_track_mc_eta'].Draw('HIST')
     canvases = {
         "distance_no_eop": c1, "distance_with_eop": c2,
         "fraction_vs_distance": c3, "failed_energies": c4,
         "parent_status": c5, "parent_pdg": c6,
         "e_over_p": c7, "position_differences": c8,
+        "e_over_p_per_event": c9, "lost_track_eta": c10,
     }
     for name, canvas in canvases.items():
-        canvas._keepalive = [leg, *histograms.values()]
+        canvas._keepalive = [leg, *eop_lines, *histograms.values()]
         canvas.SaveAs(str(directory / (name + ".png")))
     return canvases
 

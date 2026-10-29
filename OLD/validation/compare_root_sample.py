@@ -48,8 +48,9 @@ def main():
     for index, event in iter_events(chain, args.max_events):
         records[index] = analysis.process_event(event, index)
     analysis.finalize()
-    if set(original_histograms) != set(analysis.histograms):
-        raise AssertionError("The original and refactored histogram names differ")
+    if not set(original_histograms).issubset(analysis.histograms):
+        missing = sorted(set(original_histograms) - set(analysis.histograms))
+        raise AssertionError(f"Original histograms missing from refactored analysis: {missing}")
     for name, original in original_histograms.items():
         histogram = analysis.histograms[name]
         compare_values(original.GetNbinsX(), histogram.GetNbinsX(), f"{name} bin count")
@@ -76,7 +77,7 @@ def main():
         result = analysis.summary()["at_distance_cut"][new_suffix]
         compare_values(reference[f"fraction_at_cut_{old_suffix}"], result["fraction"], f"{old_suffix} fraction")
         compare_values(reference[f"n_fail_cut_{old_suffix}"], result["legacy_failed_count"], f"{old_suffix} legacy failures")
-    print(f"PASS: {len(records)} events, all {len(original_histograms)} histograms, counters and legacy event records agree.")
+    print(f"PASS: {len(records)} events, all {len(original_histograms)} legacy histograms, counters and legacy event records agree.")
 
 
 if __name__ == "__main__":
